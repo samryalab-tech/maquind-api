@@ -1,0 +1,657 @@
+// =============================================================================
+// Maquind ERP - Esquema de base de datos (MySQL 8)
+// -----------------------------------------------------------------------------
+// Todo el modelo vive aquí. Las migraciones son incrementales y versionadas:
+//   - Desarrollo:  npx prisma migrate dev --name descripcion_del_cambio
+//   - Producción:  npx prisma migrate deploy   (solo aplica lo nuevo, no borra)
+// =============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// =============================================================================
+// SEGURIDAD / ACCESOS
+// =============================================================================
+
+model Empresa {
+  id                    Int      @id @default(autoincrement())
+  rfc                   String   @unique @db.VarChar(13)
+  razonSocial           String   @db.VarChar(255)
+  nombreComercial       String?  @db.VarChar(255)
+  regimenFiscal         String   @db.VarChar(3) // c_RegimenFiscal del SAT
+  codigoPostal          String   @db.VarChar(5)
+  calle                 String?  @db.VarChar(255)
+  colonia               String?  @db.VarChar(255)
+  municipio             String?  @db.VarChar(255)
+  estado                String?  @db.VarChar(255)
+  pais                  String   @default("México") @db.VarChar(100)
+  telefono              String?  @db.VarChar(30)
+  email                 String?  @db.VarChar(255)
+  sitioWeb              String?  @db.VarChar(255)
+  logoUrl               String?  @db.VarChar(500)
+
+  // Datos fiscales / PAC
+  certificadoPath       String?  @db.VarChar(500)
+  llavePath             String?  @db.VarChar(500)
+  llavePasswordCifrada  String?  @db.VarChar(500)
+  pacProveedor          String?  @db.VarChar(50)
+  pacUsuario            String?  @db.VarChar(255)
+  pacPasswordCifrada    String?  @db.VarChar(500)
+  serieFactura          String   @default("A") @db.VarChar(10)
+  folioFacturaActual    Int      @default(1)
+
+  activo                Boolean  @default(true)
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  usuarios              UsuarioEmpresa[]
+  clientes              Cliente[]
+  productos             Producto[]
+  cotizaciones          Cotizacion[]
+  trabajos              Trabajo[]
+  cobros                Cobro[]
+  facturas              Factura[]
+  pagos                 Pago[]
+  configuraciones       Configuracion[]
+  plantillasCorreo      PlantillaCorreo[]
+  correos               CorreoLog[]
+  archivos              Archivo[]
+  auditorias            AuditLog[]
+
+  @@map("empresa")
+}
+
+model Perfil {
+  id          Int      @id @default(autoincrement())
+  nombre      String   @unique @db.VarChar(100)
+  descripcion String?  @db.VarChar(255)
+  esAdmin     Boolean  @default(false) // ignora la matriz de permisos (bypass total)
+  activo      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  permisos    PerfilPermiso[]
+  usuarios    Usuario[]
+
+  @@map("perfil")
+}
+
+// Catálogo fijo de módulos y acciones (se siembra en el seed)
+model Permiso {
+  id          Int     @id @default(autoincrement())
+  modulo      String  @db.VarChar(50)
+  accion      String  @db.VarChar(50)
+  descripcion String? @db.VarChar(255)
+
+  @@unique([modulo, accion])
+  @@map("permiso")
+}
+
+model PerfilPermiso {
+  id        Int     @id @default(autoincrement())
+  perfilId  Int
+  modulo    String  @db.VarChar(50)
+  accion    String  @db.VarChar(50)
+  permitido Boolean @default(true)
+
+  perfil    Perfil  @relation(fields: [perfilId], references: [id], onDelete: Cascade)
+
+  @@unique([perfilId, modulo, accion])
+  @@map("perfil_permiso")
+}
+
+// Excepción por usuario: gana siempre sobre el permiso del perfil
+model UsuarioPermiso {
+  id        Int     @id @default(autoincrement())
+  usuarioId Int
+  modulo    String  @db.VarChar(50)
+  accion    String  @db.VarChar(50)
+  permitido Boolean
+
+  usuario   Usuario @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+
+  @@unique([usuarioId, modulo, accion])
+  @@map("usuario_permiso")
+}
+
+model Usuario {
+  id                Int       @id @default(autoincrement())
+  nombre            String    @db.VarChar(150)
+  apellido          String?   @db.VarChar(150)
+  email             String    @unique @db.VarChar(255)
+  passwordHash      String    @db.VarChar(255)
+  telefono          String?   @db.VarChar(30)
+  avatarUrl         String?   @db.VarChar(500)
+  activo            Boolean   @default(true)
+  esSuperadmin      Boolean   @default(false)
+  perfilId          Int?
+  ultimoAcceso      DateTime?
+  intentosFallidos  Int       @default(0)
+  bloqueadoHasta    DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  perfil            Perfil?   @relation(fields: [perfilId], references: [id])
+  empresas          UsuarioEmpresa[]
+  permisos          UsuarioPermiso[]
+  refreshTokens     RefreshToken[]
+  cotizaciones      Cotizacion[]
+  trabajos          Trabajo[]
+  cobros            Cobro[]
+  facturas          Factura[]
+  pagos             Pago[]
+
+  @@map("usuario")
+}
+
+model UsuarioEmpresa {
+  id        Int      @id @default(autoincrement())
+  usuarioId Int
+  empresaId Int
+  esDefault Boolean  @default(false)
+
+  usuario   Usuario  @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+  empresa   Empresa  @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+
+  @@unique([usuarioId, empresaId])
+  @@map("usuario_empresa")
+}
+
+model RefreshToken {
+  id        Int      @id @default(autoincrement())
+  usuarioId Int
+  tokenHash String   @db.VarChar(255)
+  expiresAt DateTime
+  revoked   Boolean  @default(false)
+  ip        String?  @db.VarChar(64)
+  userAgent String?  @db.VarChar(500)
+  createdAt DateTime @default(now())
+
+  usuario   Usuario  @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+
+  @@index([tokenHash])
+  @@map("refresh_token")
+}
+
+// =============================================================================
+// CATÁLOGOS DE NEGOCIO
+// =============================================================================
+
+model Cliente {
+  id                 Int      @id @default(autoincrement())
+  empresaId          Int
+  codigo             String?  @db.VarChar(30)
+  razonSocial        String   @db.VarChar(255)
+  nombreComercial    String?  @db.VarChar(255)
+  rfc                String   @db.VarChar(13)
+  regimenFiscal      String   @db.VarChar(3)
+  codigoPostalFiscal String   @db.VarChar(5)
+  usoCfdi            String   @default("G03") @db.VarChar(4)
+  formaPago          String?  @db.VarChar(3)
+  metodoPago         String?  @db.VarChar(3)
+  email              String?  @db.VarChar(255)
+  telefono           String?  @db.VarChar(30)
+  contacto           String?  @db.VarChar(200)
+  calle              String?  @db.VarChar(255)
+  colonia            String?  @db.VarChar(255)
+  municipio          String?  @db.VarChar(255)
+  estado             String?  @db.VarChar(255)
+  pais               String   @default("México") @db.VarChar(100)
+  diasCredito        Int      @default(0)
+  notas              String?  @db.Text
+  activo             Boolean  @default(true)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  empresa            Empresa  @relation(fields: [empresaId], references: [id])
+  cotizaciones       Cotizacion[]
+  trabajos           Trabajo[]
+  cobros             Cobro[]
+  facturas           Factura[]
+  pagos              Pago[]
+
+  @@index([empresaId, razonSocial])
+  @@map("cliente")
+}
+
+model Producto {
+  id            Int      @id @default(autoincrement())
+  empresaId     Int
+  codigo        String   @db.VarChar(30)
+  nombre        String   @db.VarChar(255)
+  descripcion   String?  @db.Text
+  categoria     String?  @db.VarChar(100)
+  unidad        String   @default("Servicio") @db.VarChar(50)
+  precio        Decimal  @default(0) @db.Decimal(14, 2)
+  moneda        String   @default("MXN") @db.VarChar(3)
+  ivaTasa       Decimal  @default(16) @db.Decimal(5, 2)
+  iepsTasa      Decimal  @default(0) @db.Decimal(5, 2)
+  claveProdServ  String? @db.VarChar(20) // c_ClaveProdServ SAT
+  claveUnidad    String? @db.VarChar(20) // c_ClaveUnidad SAT
+  objetoImpuesto String? @default("02") @db.VarChar(2) // 01 no objeto, 02 sí objeto
+  esServicio    Boolean  @default(true)
+  activo        Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  empresa       Empresa  @relation(fields: [empresaId], references: [id])
+  cotizacionItems CotizacionItem[]
+  trabajoItems  TrabajoItem[]
+
+  @@unique([empresaId, codigo])
+  @@index([empresaId, nombre])
+  @@map("producto")
+}
+
+// =============================================================================
+// FLUJO: COTIZACIÓN -> TRABAJO -> COBRO -> FACTURA -> PAGO
+// =============================================================================
+
+enum EstadoCotizacion {
+  BORRADOR
+  ENVIADA
+  ACEPTADA
+  RECHAZADA
+  CONVERTIDA
+  CANCELADA
+}
+
+model Cotizacion {
+  id                 Int              @id @default(autoincrement())
+  empresaId          Int
+  clienteId          Int
+  usuarioId          Int?
+  folio              String           @db.VarChar(30)
+  estado             EstadoCotizacion @default(BORRADOR)
+  fecha              DateTime         @default(now())
+  validezDias        Int              @default(15)
+  fechaVencimiento   DateTime?
+  moneda             String           @default("MXN") @db.VarChar(3)
+  subtotal           Decimal          @default(0) @db.Decimal(14, 2)
+  descuento          Decimal          @default(0) @db.Decimal(14, 2)
+  iva                Decimal          @default(0) @db.Decimal(14, 2)
+  ieps               Decimal          @default(0) @db.Decimal(14, 2)
+  total              Decimal          @default(0) @db.Decimal(14, 2)
+  condiciones        String?          @db.Text
+  observaciones      String?          @db.Text
+  notasInternas      String?          @db.Text
+  emailEnviadoAt     DateTime?
+  emailDestinatario  String?          @db.VarChar(255)
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+
+  empresa            Empresa          @relation(fields: [empresaId], references: [id])
+  cliente            Cliente          @relation(fields: [clienteId], references: [id])
+  usuario            Usuario?         @relation(fields: [usuarioId], references: [id])
+  items              CotizacionItem[]
+  trabajos           Trabajo[]
+
+  @@unique([empresaId, folio])
+  @@index([empresaId, estado])
+  @@map("cotizacion")
+}
+
+model CotizacionItem {
+  id             Int        @id @default(autoincrement())
+  cotizacionId   Int
+  productoId     Int?
+  orden          Int        @default(0)
+  descripcion    String     @db.VarChar(500)
+  unidad         String     @default("Servicio") @db.VarChar(50)
+  cantidad       Decimal    @default(1) @db.Decimal(14, 4)
+  precioUnitario Decimal    @default(0) @db.Decimal(14, 2)
+  descuentoPct   Decimal    @default(0) @db.Decimal(5, 2)
+  ivaTasa        Decimal    @default(16) @db.Decimal(5, 2)
+  iepsTasa       Decimal    @default(0) @db.Decimal(5, 2)
+  importe        Decimal    @default(0) @db.Decimal(14, 2)
+  importeIva     Decimal    @default(0) @db.Decimal(14, 2)
+  importeIeps    Decimal    @default(0) @db.Decimal(14, 2)
+  total          Decimal    @default(0) @db.Decimal(14, 2)
+
+  cotizacion     Cotizacion @relation(fields: [cotizacionId], references: [id], onDelete: Cascade)
+  producto       Producto?  @relation(fields: [productoId], references: [id])
+
+  @@index([cotizacionId])
+  @@map("cotizacion_item")
+}
+
+enum EstadoTrabajo {
+  PENDIENTE
+  EN_PROCESO
+  TERMINADO
+  ENTREGADO
+  CANCELADO
+}
+
+model Trabajo {
+  id            Int           @id @default(autoincrement())
+  empresaId     Int
+  clienteId     Int
+  cotizacionId  Int?
+  usuarioId     Int?
+  folio         String        @db.VarChar(30)
+  estado        EstadoTrabajo @default(PENDIENTE)
+  fecha         DateTime      @default(now())
+  descripcion   String?       @db.Text
+  moneda        String        @default("MXN") @db.VarChar(3)
+  subtotal      Decimal       @default(0) @db.Decimal(14, 2)
+  descuento     Decimal       @default(0) @db.Decimal(14, 2)
+  iva           Decimal       @default(0) @db.Decimal(14, 2)
+  ieps          Decimal       @default(0) @db.Decimal(14, 2)
+  total         Decimal       @default(0) @db.Decimal(14, 2)
+  facturable    Boolean       @default(true)
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  empresa       Empresa       @relation(fields: [empresaId], references: [id])
+  cliente       Cliente       @relation(fields: [clienteId], references: [id])
+  cotizacion    Cotizacion?   @relation(fields: [cotizacionId], references: [id])
+  usuario       Usuario?      @relation(fields: [usuarioId], references: [id])
+  items         TrabajoItem[]
+  cobros        CobroTrabajo[]
+
+  @@unique([empresaId, folio])
+  @@index([empresaId, estado])
+  @@map("trabajo")
+}
+
+model TrabajoItem {
+  id             Int      @id @default(autoincrement())
+  trabajoId      Int
+  productoId     Int?
+  orden          Int      @default(0)
+  descripcion    String   @db.VarChar(500)
+  unidad         String   @default("Servicio") @db.VarChar(50)
+  cantidad       Decimal  @default(1) @db.Decimal(14, 4)
+  precioUnitario Decimal  @default(0) @db.Decimal(14, 2)
+  descuentoPct   Decimal  @default(0) @db.Decimal(5, 2)
+  ivaTasa        Decimal  @default(16) @db.Decimal(5, 2)
+  iepsTasa       Decimal  @default(0) @db.Decimal(5, 2)
+  importe        Decimal  @default(0) @db.Decimal(14, 2)
+  importeIva     Decimal  @default(0) @db.Decimal(14, 2)
+  importeIeps    Decimal  @default(0) @db.Decimal(14, 2)
+  total          Decimal  @default(0) @db.Decimal(14, 2)
+
+  trabajo        Trabajo  @relation(fields: [trabajoId], references: [id], onDelete: Cascade)
+  producto       Producto? @relation(fields: [productoId], references: [id])
+
+  @@index([trabajoId])
+  @@map("trabajo_item")
+}
+
+// FISCAL = se enviará al SAT.  NO_FISCAL = se factura por otro portal
+enum TipoCobro {
+  FISCAL
+  NO_FISCAL
+}
+
+enum EstadoCobro {
+  PENDIENTE
+  PARCIAL
+  PAGADO
+  CANCELADO
+}
+
+model Cobro {
+  id            Int          @id @default(autoincrement())
+  empresaId     Int
+  clienteId     Int
+  usuarioId     Int?
+  folio         String       @db.VarChar(30)
+  tipo          TipoCobro    @default(FISCAL)
+  estado        EstadoCobro  @default(PENDIENTE)
+  fecha         DateTime     @default(now())
+  periodoDesde  DateTime?
+  periodoHasta  DateTime?
+  moneda        String       @default("MXN") @db.VarChar(3)
+  subtotal      Decimal      @default(0) @db.Decimal(14, 2)
+  iva           Decimal      @default(0) @db.Decimal(14, 2)
+  ieps          Decimal      @default(0) @db.Decimal(14, 2)
+  total         Decimal      @default(0) @db.Decimal(14, 2)
+  saldo         Decimal      @default(0) @db.Decimal(14, 2)
+  formaPago     String       @default("99") @db.VarChar(3)
+  metodoPago    String       @default("PUE") @db.VarChar(3)
+  usoCfdi       String       @default("G03") @db.VarChar(4)
+  observaciones String?      @db.Text
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  empresa       Empresa      @relation(fields: [empresaId], references: [id])
+  cliente       Cliente      @relation(fields: [clienteId], references: [id])
+  usuario       Usuario?     @relation(fields: [usuarioId], references: [id])
+  trabajos      CobroTrabajo[]
+  facturas      Factura[]
+  pagos         Pago[]
+
+  @@unique([empresaId, folio])
+  @@index([empresaId, tipo, estado])
+  @@map("cobro")
+}
+
+model CobroTrabajo {
+  id         Int     @id @default(autoincrement())
+  cobroId    Int
+  trabajoId  Int
+  importe    Decimal @default(0) @db.Decimal(14, 2)
+
+  cobro      Cobro   @relation(fields: [cobroId], references: [id], onDelete: Cascade)
+  trabajo    Trabajo @relation(fields: [trabajoId], references: [id])
+
+  @@unique([cobroId, trabajoId])
+  @@map("cobro_trabajo")
+}
+
+enum EstadoFactura {
+  BORRADOR
+  TIMBRADA
+  CANCELADA
+  ERROR
+}
+
+model Factura {
+  id                       Int            @id @default(autoincrement())
+  empresaId                Int
+  cobroId                  Int?
+  clienteId                Int
+  usuarioId                Int?
+  serie                    String         @db.VarChar(10)
+  folio                    Int
+  uuid                     String?        @unique @db.VarChar(50)
+  estado                   EstadoFactura  @default(BORRADOR)
+  fecha                    DateTime       @default(now())
+  moneda                   String         @default("MXN") @db.VarChar(3)
+  subtotal                 Decimal        @default(0) @db.Decimal(14, 2)
+  descuento                Decimal        @default(0) @db.Decimal(14, 2)
+  iva                      Decimal        @default(0) @db.Decimal(14, 2)
+  ieps                     Decimal        @default(0) @db.Decimal(14, 2)
+  total                    Decimal        @default(0) @db.Decimal(14, 2)
+  metodoPago               String         @default("PUE") @db.VarChar(3)
+  formaPago                String         @default("99") @db.VarChar(3)
+  usoCfdi                  String         @default("G03") @db.VarChar(4)
+  regimenFiscalReceptor    String         @db.VarChar(3)
+  codigoPostalReceptor     String         @db.VarChar(5)
+  xmlPath                  String?        @db.VarChar(500)
+  pdfPath                  String?        @db.VarChar(500)
+  pacProveedor             String?        @db.VarChar(50)
+  pacRespuesta             Json?
+  timbreFecha              DateTime?
+  cancelacionMotivo        String?        @db.VarChar(3)
+  cancelacionSustituto     String?        @db.VarChar(50)
+  createdAt                DateTime       @default(now())
+  updatedAt                DateTime       @updatedAt
+
+  empresa                  Empresa        @relation(fields: [empresaId], references: [id])
+  cobro                    Cobro?         @relation(fields: [cobroId], references: [id])
+  cliente                  Cliente        @relation(fields: [clienteId], references: [id])
+  usuario                  Usuario?       @relation(fields: [usuarioId], references: [id])
+  conceptos                FacturaConcepto[]
+
+  @@unique([empresaId, serie, folio])
+  @@map("factura")
+}
+
+model FacturaConcepto {
+  id             Int      @id @default(autoincrement())
+  facturaId      Int
+  descripcion    String   @db.VarChar(500)
+  claveProdServ  String?  @db.VarChar(20)
+  claveUnidad    String?  @db.VarChar(20)
+  unidad         String   @db.VarChar(50)
+  cantidad       Decimal  @default(1) @db.Decimal(14, 4)
+  valorUnitario  Decimal  @default(0) @db.Decimal(14, 2)
+  importe        Decimal  @default(0) @db.Decimal(14, 2)
+  ivaTasa        Decimal  @default(16) @db.Decimal(5, 2)
+  base           Decimal  @default(0) @db.Decimal(14, 2)
+  importeIva     Decimal  @default(0) @db.Decimal(14, 2)
+
+  factura        Factura  @relation(fields: [facturaId], references: [id], onDelete: Cascade)
+
+  @@index([facturaId])
+  @@map("factura_concepto")
+}
+
+model Pago {
+  id               Int      @id @default(autoincrement())
+  empresaId        Int
+  clienteId        Int
+  cobroId          Int?
+  usuarioId        Int?
+  fecha            DateTime @default(now())
+  moneda           String   @default("MXN") @db.VarChar(3)
+  monto            Decimal  @db.Decimal(14, 2)
+  formaPago        String   @default("03") @db.VarChar(3) // 01 efectivo, 02 cheque, 03 transferencia, 04 tarjeta
+  referencia       String?  @db.VarChar(150)
+  conciliado       Boolean  @default(false)
+  fechaConciliacion DateTime?
+  comprobantePath  String?  @db.VarChar(500)
+  notas            String?  @db.Text
+  createdAt        DateTime @default(now())
+
+  empresa          Empresa  @relation(fields: [empresaId], references: [id])
+  cliente          Cliente  @relation(fields: [clienteId], references: [id])
+  cobro            Cobro?   @relation(fields: [cobroId], references: [id])
+  usuario          Usuario? @relation(fields: [usuarioId], references: [id])
+
+  @@index([empresaId, conciliado])
+  @@map("pago")
+}
+
+// =============================================================================
+// CONFIGURACIÓN / CORREO / AUDITORÍA
+// =============================================================================
+
+// empresaId = 0 significa configuración global del sistema
+model Configuracion {
+  id          Int      @id @default(autoincrement())
+  empresaId   Int      @default(0)
+  grupo       String   @default("general") @db.VarChar(50)
+  clave       String   @db.VarChar(100)
+  valor       String?  @db.Text
+  tipo        String   @default("string") @db.VarChar(20) // string | number | bool | json
+  descripcion String?  @db.VarChar(255)
+  updatedAt   DateTime @updatedAt
+
+  empresa     Empresa? @relation(fields: [empresaId], references: [id])
+
+  @@unique([empresaId, clave])
+  @@map("configuracion")
+}
+
+model PlantillaCorreo {
+  id        Int      @id @default(autoincrement())
+  empresaId Int      @default(0)
+  clave     String   @db.VarChar(50) // cotizacion | factura | cobro | recordatorio
+  nombre    String   @db.VarChar(150)
+  asunto    String   @db.VarChar(255)
+  cuerpo    String   @db.Text
+  activo    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  empresa   Empresa? @relation(fields: [empresaId], references: [id])
+
+  @@unique([empresaId, clave])
+  @@map("plantilla_correo")
+}
+
+enum EstadoCorreo {
+  ENVIADO
+  ERROR
+}
+
+model CorreoLog {
+  id            Int          @id @default(autoincrement())
+  empresaId     Int          @default(0)
+  plantillaClave String?     @db.VarChar(50)
+  destinatario  String       @db.VarChar(500)
+  cc            String?      @db.VarChar(500)
+  asunto        String       @db.VarChar(255)
+  cuerpo        String?      @db.Text
+  entidadTipo   String?      @db.VarChar(50)
+  entidadId     Int?
+  estado        EstadoCorreo @default(ENVIADO)
+  error         String?      @db.Text
+  usuarioId     Int?
+  createdAt     DateTime     @default(now())
+
+  empresa       Empresa?     @relation(fields: [empresaId], references: [id])
+
+  @@index([empresaId, createdAt])
+  @@map("correo_log")
+}
+
+model Archivo {
+  id          Int      @id @default(autoincrement())
+  empresaId   Int      @default(0)
+  entidadTipo String   @db.VarChar(50)
+  entidadId   Int
+  nombre      String   @db.VarChar(255)
+  path        String   @db.VarChar(500)
+  mime        String?  @db.VarChar(150)
+  size        Int?
+  usuarioId   Int?
+  createdAt   DateTime @default(now())
+
+  empresa     Empresa? @relation(fields: [empresaId], references: [id])
+
+  @@index([entidadTipo, entidadId])
+  @@map("archivo")
+}
+
+// Contador de folios por empresa y tipo (COT, TRB, COB...)
+model FolioCounter {
+  id        Int    @id @default(autoincrement())
+  empresaId Int
+  tipo      String @db.VarChar(30)
+  ultimo    Int    @default(0)
+
+  @@unique([empresaId, tipo])
+  @@map("folio_counter")
+}
+
+model AuditLog {
+  id          Int      @id @default(autoincrement())
+  empresaId   Int?
+  usuarioId   Int?
+  accion      String   @db.VarChar(50)
+  modulo      String   @db.VarChar(50)
+  entidadTipo String?  @db.VarChar(50)
+  entidadId   Int?
+  descripcion String?  @db.VarChar(500)
+  datos       Json?
+  ip          String?  @db.VarChar(64)
+  userAgent   String?  @db.VarChar(500)
+  createdAt   DateTime @default(now())
+
+  empresa     Empresa? @relation(fields: [empresaId], references: [id])
+
+  @@index([empresaId, createdAt])
+  @@index([usuarioId])
+  @@map("audit_log")
+}

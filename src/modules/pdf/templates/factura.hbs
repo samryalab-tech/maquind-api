@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<title>Factura {{factura.serie}}-{{factura.folio}}</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: 'Helvetica Neue', Arial, sans-serif; color: #32325d; margin: 0; font-size: 12px; }
+  .wrap { padding: 8px 6px; }
+  .top { display: flex; justify-content: space-between; align-items: flex-start; }
+  .brand { display: flex; gap: 14px; align-items: center; }
+  .brand img { height: 60px; max-width: 180px; object-fit: contain; }
+  .brand h1 { margin: 0; font-size: 18px; color: #172b4d; }
+  .brand p { margin: 2px 0 0; color: #8898aa; font-size: 11px; }
+  .doc { text-align: right; }
+  .doc .tipo { font-size: 22px; font-weight: 800; color: #5e72e4; letter-spacing: 1px; }
+  .doc .folio { font-size: 14px; font-weight: 700; color: #172b4d; }
+  .doc .meta { color: #8898aa; margin-top: 4px; }
+  .accent { height: 4px; background: linear-gradient(90deg,#5e72e4,#825ee4); border-radius: 4px; margin: 14px 0 18px; }
+  .grid { display: flex; gap: 18px; margin-bottom: 16px; }
+  .card { flex: 1; background: #f7f8fc; border: 1px solid #e9ecef; border-radius: 10px; padding: 12px 14px; }
+  .card h3 { margin: 0 0 8px; font-size: 11px; text-transform: uppercase; letter-spacing: .6px; color: #8898aa; }
+  .card .name { font-size: 14px; font-weight: 700; color: #172b4d; margin-bottom: 4px; }
+  .card p { margin: 2px 0; }
+  .uuid { margin-top: 10px; background: #f0f4ff; border: 1px dashed #5e72e4; border-radius: 8px; padding: 10px 14px; font-size: 11px; }
+  .uuid strong { color: #5e72e4; }
+  table { width: 100%; border-collapse: collapse; margin-top: 6px; }
+  thead th { background: #5e72e4; color: #fff; text-align: left; padding: 9px 10px; font-size: 11px; text-transform: uppercase; letter-spacing: .4px; }
+  thead th.num, tbody td.num { text-align: right; }
+  tbody td { padding: 9px 10px; border-bottom: 1px solid #e9ecef; vertical-align: top; }
+  tbody tr:nth-child(even) { background: #fafbfe; }
+  .totales { margin-top: 14px; display: flex; justify-content: flex-end; }
+  .totales table { width: 300px; }
+  .totales td { padding: 6px 10px; border: none; }
+  .totales .label { color: #8898aa; }
+  .totales .total { font-size: 16px; font-weight: 800; color: #172b4d; border-top: 2px solid #e9ecef; }
+  .footer { margin-top: 22px; border-top: 1px solid #e9ecef; padding-top: 10px; color: #8898aa; font-size: 10px; text-align: center; }
+  .badge { display: inline-block; padding: 3px 10px; border-radius: 20px; font-size: 10px; font-weight: 700; text-transform: uppercase; background: #e8f5e9; color: #2e7d32; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <div class="brand">
+      {{#if empresa.logoUrl}}<img src="{{empresa.logoUrl}}" alt="logo" />{{/if}}
+      <div>
+        <h1>{{empresa.nombreComercial}}</h1>
+        <p>{{empresa.razonSocial}} · RFC {{empresa.rfc}}</p>
+        <p>Régimen: {{empresa.regimenFiscal}} · C.P. {{empresa.codigoPostal}}</p>
+        <p>{{empresa.telefono}} · {{empresa.email}}</p>
+      </div>
+    </div>
+    <div class="doc">
+      <div class="tipo">FACTURA</div>
+      <div class="folio">{{factura.serie}}-{{factura.folio}}</div>
+      <div class="meta">Fecha: {{fechaCorta factura.fecha}}</div>
+      <div class="meta"><span class="badge">{{factura.estado}}</span></div>
+    </div>
+  </div>
+  <div class="accent"></div>
+
+  <div class="grid">
+    <div class="card">
+      <h3>Receptor</h3>
+      <div class="name">{{cotizacion.cliente.razonSocial}}</div>
+      <p>RFC: {{cotizacion.cliente.rfc}}</p>
+      <p>Régimen: {{factura.regimenFiscalReceptor}} · C.P. {{factura.codigoPostalReceptor}}</p>
+      <p>Uso CFDI: {{factura.usoCfdi}}</p>
+    </div>
+    <div class="card">
+      <h3>Detalles</h3>
+      <p><strong>Moneda:</strong> {{factura.moneda}}</p>
+      <p><strong>Método de pago:</strong> {{factura.metodoPago}}</p>
+      <p><strong>Forma de pago:</strong> {{factura.formaPago}}</p>
+    </div>
+  </div>
+
+  {{#if factura.uuid}}
+  <div class="uuid">
+    <strong>UUID (Folio Fiscal):</strong> {{factura.uuid}}<br/>
+    <strong>Timbrado:</strong> {{fechaCorta factura.timbreFecha}}
+  </div>
+  {{/if}}
+
+  <table>
+    <thead>
+      <tr>
+        <th>Descripción</th>
+        <th style="width:70px">Clave</th>
+        <th style="width:60px">Cant.</th>
+        <th class="num" style="width:100px">P. Unitario</th>
+        <th class="num" style="width:100px">Importe</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{#each conceptos}}
+      <tr>
+        <td>{{this.descripcion}}</td>
+        <td>{{this.claveProdServ}}</td>
+        <td>{{num this.cantidad 2}}</td>
+        <td class="num">{{money this.valorUnitario ../factura.moneda}}</td>
+        <td class="num">{{money this.importe ../factura.moneda}}</td>
+      </tr>
+      {{/each}}
+    </tbody>
+  </table>
+
+  <div class="totales">
+    <table>
+      <tr><td class="label">Subtotal</td><td class="num">{{money factura.subtotal factura.moneda}}</td></tr>
+      {{#if factura.descuento}}<tr><td class="label">Descuento</td><td class="num">- {{money factura.descuento factura.moneda}}</td></tr>{{/if}}
+      <tr><td class="label">IVA</td><td class="num">{{money factura.iva factura.moneda}}</td></tr>
+      <tr><td class="label total">Total</td><td class="num total">{{money factura.total factura.moneda}}</td></tr>
+    </table>
+  </div>
+
+  <div class="footer">
+    Este documento es una representación impresa de un CFDI 4.0.
+    {{#if factura.uuid}}Verifica su validez en el portal del SAT con el folio fiscal indicado.{{/if}}
+  </div>
+</div>
+</body>
+</html>

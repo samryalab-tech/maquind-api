@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<title>Cotización {{cotizacion.folio}}</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: 'Helvetica Neue', Arial, sans-serif; color: #32325d; margin: 0; font-size: 12px; }
+  .wrap { padding: 8px 6px; }
+  .top { display: flex; justify-content: space-between; align-items: flex-start; }
+  .brand { display: flex; gap: 14px; align-items: center; }
+  .brand img { height: 60px; max-width: 180px; object-fit: contain; }
+  .brand h1 { margin: 0; font-size: 18px; color: #172b4d; }
+  .brand p { margin: 2px 0 0; color: #8898aa; font-size: 11px; }
+  .doc { text-align: right; }
+  .doc .tipo { font-size: 22px; font-weight: 800; color: #5e72e4; letter-spacing: 1px; }
+  .doc .folio { font-size: 14px; font-weight: 700; color: #172b4d; }
+  .doc .meta { color: #8898aa; margin-top: 4px; }
+  .accent { height: 4px; background: linear-gradient(90deg,#5e72e4,#825ee4); border-radius: 4px; margin: 14px 0 18px; }
+  .grid { display: flex; gap: 18px; margin-bottom: 16px; }
+  .card { flex: 1; background: #f7f8fc; border: 1px solid #e9ecef; border-radius: 10px; padding: 12px 14px; }
+  .card h3 { margin: 0 0 8px; font-size: 11px; text-transform: uppercase; letter-spacing: .6px; color: #8898aa; }
+  .card .name { font-size: 14px; font-weight: 700; color: #172b4d; margin-bottom: 4px; }
+  .card p { margin: 2px 0; }
+  table { width: 100%; border-collapse: collapse; margin-top: 6px; }
+  thead th { background: #5e72e4; color: #fff; text-align: left; padding: 9px 10px; font-size: 11px; text-transform: uppercase; letter-spacing: .4px; }
+  thead th.num, tbody td.num { text-align: right; }
+  tbody td { padding: 9px 10px; border-bottom: 1px solid #e9ecef; vertical-align: top; }
+  tbody tr:nth-child(even) { background: #fafbfe; }
+  .totales { margin-top: 14px; display: flex; justify-content: flex-end; }
+  .totales table { width: 300px; }
+  .totales td { padding: 6px 10px; border: none; }
+  .totales .label { color: #8898aa; }
+  .totales .total { font-size: 16px; font-weight: 800; color: #172b4d; border-top: 2px solid #e9ecef; }
+  .notas { margin-top: 18px; background: #f7f8fc; border-left: 4px solid #5e72e4; padding: 10px 14px; border-radius: 6px; color: #525f7f; }
+  .footer { margin-top: 22px; border-top: 1px solid #e9ecef; padding-top: 10px; color: #8898aa; font-size: 10px; text-align: center; }
+  .badge { display: inline-block; padding: 3px 10px; border-radius: 20px; font-size: 10px; font-weight: 700; text-transform: uppercase;
+           background: #e8f5e9; color: #2e7d32; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <div class="brand">
+      {{#if empresa.logoUrl}}<img src="{{empresa.logoUrl}}" alt="logo" />{{/if}}
+      <div>
+        <h1>{{empresa.nombreComercial}}</h1>
+        <p>{{empresa.razonSocial}} · RFC {{empresa.rfc}}</p>
+        <p>{{empresa.calle}} {{empresa.colonia}}, {{empresa.municipio}}, {{empresa.estado}} C.P. {{empresa.codigoPostal}}</p>
+        <p>{{empresa.telefono}} · {{empresa.email}}</p>
+      </div>
+    </div>
+    <div class="doc">
+      <div class="tipo">COTIZACIÓN</div>
+      <div class="folio">{{cotizacion.folio}}</div>
+      <div class="meta">Fecha: {{fechaCorta cotizacion.fecha}}</div>
+      <div class="meta">Vence: {{fechaCorta cotizacion.fechaVencimiento}}</div>
+      <div class="meta"><span class="badge">{{cotizacion.estado}}</span></div>
+    </div>
+  </div>
+  <div class="accent"></div>
+
+  <div class="grid">
+    <div class="card">
+      <h3>Cliente</h3>
+      <div class="name">{{cotizacion.cliente.razonSocial}}</div>
+      {{#if cotizacion.cliente.nombreComercial}}<p>{{cotizacion.cliente.nombreComercial}}</p>{{/if}}
+      <p>RFC: {{cotizacion.cliente.rfc}}</p>
+      <p>{{cotizacion.cliente.calle}} {{cotizacion.cliente.colonia}}</p>
+      <p>{{cotizacion.cliente.municipio}}, {{cotizacion.cliente.estado}} C.P. {{cotizacion.cliente.codigoPostalFiscal}}</p>
+      {{#if cotizacion.cliente.email}}<p>{{cotizacion.cliente.email}}</p>{{/if}}
+      {{#if cotizacion.cliente.telefono}}<p>Tel: {{cotizacion.cliente.telefono}}</p>{{/if}}
+    </div>
+    <div class="card">
+      <h3>Detalles</h3>
+      <p><strong>Moneda:</strong> {{cotizacion.moneda}}</p>
+      <p><strong>Validez:</strong> {{cotizacion.validezDias}} días</p>
+      {{#if cotizacion.usuario}}<p><strong>Atendió:</strong> {{cotizacion.usuario.nombre}}</p>{{/if}}
+    </div>
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th style="width:38px">#</th>
+        <th>Descripción</th>
+        <th style="width:70px">Unidad</th>
+        <th class="num" style="width:60px">Cant.</th>
+        <th class="num" style="width:90px">P. Unitario</th>
+        <th class="num" style="width:60px">Desc.</th>
+        <th class="num" style="width:100px">Importe</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{#each items}}
+      <tr>
+        <td>{{inc @index}}</td>
+        <td>{{this.descripcion}}</td>
+        <td>{{this.unidad}}</td>
+        <td class="num">{{num this.cantidad 2}}</td>
+        <td class="num">{{money this.precioUnitario ../cotizacion.moneda}}</td>
+        <td class="num">{{num this.descuentoPct 0}}%</td>
+        <td class="num">{{money this.importe ../cotizacion.moneda}}</td>
+      </tr>
+      {{/each}}
+    </tbody>
+  </table>
+
+  <div class="totales">
+    <table>
+      <tr><td class="label">Subtotal</td><td class="num">{{money cotizacion.subtotal cotizacion.moneda}}</td></tr>
+      {{#if cotizacion.descuento}}<tr><td class="label">Descuento</td><td class="num">- {{money cotizacion.descuento cotizacion.moneda}}</td></tr>{{/if}}
+      <tr><td class="label">IVA</td><td class="num">{{money cotizacion.iva cotizacion.moneda}}</td></tr>
+      {{#if cotizacion.ieps}}<tr><td class="label">IEPS</td><td class="num">{{money cotizacion.ieps cotizacion.moneda}}</td></tr>{{/if}}
+      <tr><td class="label total">Total</td><td class="num total">{{money cotizacion.total cotizacion.moneda}}</td></tr>
+    </table>
+  </div>
+
+  {{#if cotizacion.condiciones}}
+  <div class="notas"><strong>Condiciones:</strong><br/>{{{cotizacion.condiciones}}}</div>
+  {{/if}}
+  {{#if cotizacion.observaciones}}
+  <div class="notas"><strong>Observaciones:</strong><br/>{{{cotizacion.observaciones}}}</div>
+  {{/if}}
+
+  <div class="footer">
+    {{empresa.razonSocial}} · Esta cotización está sujeta a disponibilidad y a las condiciones indicadas.
+  </div>
+</div>
+</body>
+</html>
