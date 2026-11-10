@@ -7,6 +7,7 @@ import helmet from 'helmet';
 import { apiRateLimiter } from './middleware/rateLimit';
 import { errorHandler } from './middleware/errorHandler';
 import { env } from './config/env';
+import { prisma } from './lib/prisma';
 
 import authRouter from './modules/auth/auth.routes';
 import usersRouter from './modules/users/users.routes';
@@ -28,6 +29,9 @@ import pdfRouter from './modules/pdf/pdf.routes';
 
 export function createApp() {
   const app = express();
+
+  // Detrás de LiteSpeed/Nginx necesitamos la IP real y el protocolo (https).
+  app.set('trust proxy', 1);
 
   // Seguridad y middlewares base
   app.use(helmet());
@@ -51,9 +55,21 @@ export function createApp() {
 
   app.use(apiRateLimiter);
 
-  // Ruta de salud
-  app.get('/health', (_req, res) => {
-    res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  // Ruta de salud: responde siempre que el proceso esté vivo e indica la DB.
+  app.get('/health', async (_req, res) => {
+    let db: 'up' | 'down' = 'down';
+    try {
+      await prisma.$queryRaw`SELECT 1`;
+      db = 'up';
+    } catch {
+      db = 'down';
+    }
+    res.json({
+      status: 'ok',
+      db,
+      uptime: Math.round(process.uptime()),
+      timestamp: new Date().toISOString(),
+    });
   });
 
   // Rutas de módulos
