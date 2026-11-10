@@ -75,7 +75,7 @@ export function createApp() {
   app.use('/api/auditoria', auditRouter);
   app.use('/api/pdf', pdfRouter);
 
-  app.use('/storage', express.static('storage')); // PDFs, comprobantes, etc.
+  app.use('/storage', express.static(env.storageDir)); // PDFs, comprobantes, etc.
 
   app.use(errorHandler);
   return app;
