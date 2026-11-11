@@ -20,9 +20,29 @@ router.get(
     const where: any = req.empresaId ? { empresaId: req.empresaId } : {};
     if (req.query.estado) where.estado = req.query.estado;
     if (req.query.clienteId) where.clienteId = Number(req.query.clienteId);
+
+    // Trabajos que todavía se pueden cobrar: no deben estar cancelados ni
+    // incluidos en otro cobro. Un trabajo se cobra una sola vez.
+    const soloDisponibles = req.query.sinCobro === '1' || req.query.sinCobro === 'true';
+    if (soloDisponibles) {
+      where.cobros = { none: { cobro: { estado: { not: 'CANCELADO' } } } };
+      if (!req.query.estado) where.estado = { not: 'CANCELADO' };
+    }
+
     if (p.search) where.OR = [{ folio: { contains: p.search } }, { cliente: { razonSocial: { contains: p.search } } }];
     const [items, total] = await Promise.all([
-      prisma.trabajo.findMany({ where, skip: p.skip, take: p.take, orderBy, include: { cliente: true, cotizacion: true, items: true } }),
+      prisma.trabajo.findMany({
+        where,
+        skip: p.skip,
+        take: p.take,
+        orderBy,
+        include: {
+          cliente: true,
+          cotizacion: true,
+          items: { orderBy: { orden: 'asc' } },
+          cobros: { include: { cobro: { select: { id: true, folio: true, estado: true, tipo: true } } } },
+        },
+      }),
       prisma.trabajo.count({ where }),
     ]);
     return res.json({ success: true, data: buildPaginated(items, total, p) });
@@ -42,6 +62,7 @@ router.get(
         cotizacion: true,
         usuario: true,
         items: { orderBy: { orden: 'asc' } },
+        cobros: { include: { cobro: { select: { id: true, folio: true, estado: true, tipo: true, fecha: true } } } },
       },
     });
     if (!t) throw ApiError.notFound();

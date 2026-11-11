@@ -39,7 +39,12 @@ router.get(
       where: { id, ...(req.empresaId ? { empresaId: req.empresaId } : {}) },
       include: {
         cliente: true,
-        trabajos: { include: { trabajo: true } },
+        trabajos: {
+          include: {
+            trabajo: { include: { items: { orderBy: { orden: 'asc' } } } },
+          },
+          orderBy: { id: 'asc' },
+        },
         facturas: true,
         pagos: true,
       },
@@ -57,13 +62,47 @@ router.post(
     const empresaId = req.empresaId!;
     const { clienteId, tipo = 'FISCAL', trabajos = [], periodoDesde, periodoHasta } = req.body;
     if (!trabajos.length) throw ApiError.badRequest('Selecciona al menos un trabajo para generar el cobro');
-    const trabajoIds = trabajos.map((t: any) => t.trabajoId).filter(Boolean);
+
+    // Sin duplicados en la petición
+    const trabajoIds = [...new Set<number>(trabajos.map((t: any) => Number(t.trabajoId)).filter(Boolean))];
+    if (!trabajoIds.length) throw ApiError.badRequest('Selecciona al menos un trabajo para generar el cobro');
+
     const trabajosDb = await prisma.trabajo.findMany({ where: { id: { in: trabajoIds }, empresaId, clienteId } });
     if (trabajosDb.length !== trabajoIds.length) throw ApiError.badRequest('Hay trabajos inválidos o no corresponden al cliente');
 
-    const tot = trabajosDb.reduce((acc, t) => acc + toNum(t.total), 0);
+    const cancelados = trabajosDb.filter((t) => t.estado === 'CANCELADO');
+    if (cancelados.length) {
+      throw ApiError.badRequest(
+        `No se puede cobrar un trabajo cancelado: ${cancelados.map((t) => t.folio).join(', ')}`,
+      );
+    }
+
+    // Un trabajo se cobra una sola vez: no puede estar en otro cobro vigente.
+    const yaCobrados = await prisma.cobroTrabajo.findMany({
+      where: { trabajoId: { in: trabajoIds }, cobro: { estado: { not: 'CANCELADO' } } },
+      include: { cobro: { select: { folio: true } }, trabajo: { select: { folio: true } } },
+    });
+    if (yaCobrados.length) {
+      const porTrabajo = new Map<string, string[]>();
+      for (const c of yaCobrados) {
+        const folios = porTrabajo.get(c.trabajo.folio) ?? [];
+        if (!folios.includes(c.cobro.folio)) folios.push(c.cobro.folio);
+        porTrabajo.set(c.trabajo.folio, folios);
+      }
+      const detalle = [...porTrabajo].map(([folio, folios]) => `${folio} (cobro ${folios.join(', ')})`).join(', ');
+      throw ApiError.conflict(`Estos trabajos ya fueron cobrados y no se pueden volver a cobrar: ${detalle}`);
+    }
+
+    const suma = (fn: (t: any) => any) => trabajosDb.reduce((acc, t) => acc + toNum(fn(t)), 0);
+
     const cobro = await prisma.$transaction(async (tx: PrismaTx) => {
-      const folio = await nextFolio({ tipo: 'COB', prefix: 'COB', pad: 4 }, empresaId, tx);
+      // Segunda validación dentro de la transacción (evita duplicados por doble clic).
+      const repetidos = await tx.cobroTrabajo.findFirst({
+        where: { trabajoId: { in: trabajoIds }, cobro: { estado: { not: 'CANCELADO' } } },
+      });
+      if (repetidos) throw ApiError.conflict('Alguno de los trabajos ya fue agregado a otro cobro. Actualiza la lista.');
+
+      const folio = await nextFolio(FOLIOS.cobro, empresaId, tx);
       const c = await tx.cobro.create({
         data: {
           empresaId,
@@ -76,11 +115,11 @@ router.post(
           periodoDesde: periodoDesde ? new Date(periodoDesde) : null,
           periodoHasta: periodoHasta ? new Date(periodoHasta) : null,
           moneda: 'MXN',
-          subtotal: tot,
-          iva: 0,
-          ieps: 0,
-          total: tot,
-          saldo: tot,
+          subtotal: suma((t) => t.subtotal),
+          iva: suma((t) => t.iva),
+          ieps: suma((t) => t.ieps),
+          total: suma((t) => t.total),
+          saldo: suma((t) => t.total),
           formaPago: req.body.formaPago || '99',
           metodoPago: req.body.metodoPago || 'PUE',
           usoCfdi: req.body.usoCfdi || 'G03',
