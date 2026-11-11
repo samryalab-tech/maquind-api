@@ -64,6 +64,20 @@ async function buildConceptos(cobroId: number): Promise<{ conceptos: CfdiConcept
   return { conceptos: [...agrupados.values()], trabajoIds };
 }
 
+/** Calcula los totales de una factura a partir de sus conceptos ya agrupados. */
+function calcularTotalesConceptos(conceptos: CfdiConcepto[]) {
+  const importeNeto = round2(conceptos.reduce((acc, c) => acc + c.importe, 0));
+  const bruto = round2(conceptos.reduce((acc, c) => acc + c.cantidad * c.valorUnitario, 0));
+  const iva = round2(conceptos.reduce((acc, c) => acc + c.importeIva, 0));
+  return {
+    subtotal: bruto,
+    descuento: Math.max(0, round2(bruto - importeNeto)),
+    iva,
+    ieps: 0,
+    total: round2(importeNeto + iva),
+  };
+}
+
 /** Crea una factura en BORRADOR a partir de un cobro. */
 export async function crearFacturaDesdeCobro(cobroId: number, empresaId?: number, usuarioId?: number) {
   const cobro = await prisma.cobro.findFirst({
@@ -86,15 +100,7 @@ export async function crearFacturaDesdeCobro(cobroId: number, empresaId?: number
   const { conceptos } = await buildConceptos(cobroId);
   // Los totales se toman de los conceptos (ya agrupados) para que la factura
   // cuadre exactamente con lo que se muestra en el desglose.
-  const importeNeto = round2(conceptos.reduce((acc, c) => acc + c.importe, 0));
-  const bruto = round2(conceptos.reduce((acc, c) => acc + c.cantidad * c.valorUnitario, 0));
-  const totales = {
-    subtotal: bruto,
-    descuento: Math.max(0, round2(bruto - importeNeto)),
-    iva: round2(conceptos.reduce((acc, c) => acc + c.importeIva, 0)),
-    ieps: 0,
-    total: round2(importeNeto + conceptos.reduce((acc, c) => acc + c.importeIva, 0)),
-  };
+  const totales = calcularTotalesConceptos(conceptos);
 
   const empresa = cobro.empresa;
   const serie = empresa.serieFactura;
@@ -122,18 +128,7 @@ export async function crearFacturaDesdeCobro(cobroId: number, empresaId?: number
       regimenFiscalReceptor: cobro.cliente.regimenFiscal,
       codigoPostalReceptor: cobro.cliente.codigoPostalFiscal,
       conceptos: {
-        create: conceptos.map((c) => ({
-          descripcion: c.descripcion,
-          claveProdServ: c.claveProdServ,
-          claveUnidad: c.claveUnidad,
-          unidad: c.unidad,
-          cantidad: c.cantidad,
-          valorUnitario: c.valorUnitario,
-          importe: c.importe,
-          ivaTasa: c.ivaTasa,
-          base: c.importe,
-          importeIva: c.importeIva,
-        })),
+        create: conceptos.map(datosConcepto),
       },
     },
     include: { conceptos: true, cliente: true },
@@ -145,6 +140,51 @@ export async function crearFacturaDesdeCobro(cobroId: number, empresaId?: number
 async function nextFolioFactura(empresaId: number, actual: number): Promise<number> {
   await prisma.empresa.update({ where: { id: empresaId }, data: { folioFacturaActual: actual + 1 } });
   return actual;
+}
+
+const datosConcepto = (c: CfdiConcepto) => ({
+  descripcion: c.descripcion,
+  claveProdServ: c.claveProdServ,
+  claveUnidad: c.claveUnidad,
+  unidad: c.unidad,
+  cantidad: c.cantidad,
+  valorUnitario: c.valorUnitario,
+  importe: c.importe,
+  ivaTasa: c.ivaTasa,
+  base: c.importe,
+  importeIva: c.importeIva,
+});
+
+/**
+ * Recalcula los conceptos de una factura en BORRADOR a partir de su cobro.
+ * Sirve para las facturas creadas antes de agrupar conceptos: vuelve a unir
+ * los repetidos en una sola línea sin cambiar el folio de la factura.
+ */
+export async function agruparConceptosFactura(facturaId: number, empresaId?: number) {
+  const factura = await prisma.factura.findFirst({
+    where: { id: facturaId, ...(empresaId ? { empresaId } : {}) },
+    select: { id: true, estado: true, cobroId: true, serie: true, folio: true },
+  });
+  if (!factura) throw ApiError.notFound('Factura no encontrada');
+  if (factura.estado !== 'BORRADOR') {
+    throw ApiError.conflict('Solo se pueden actualizar los conceptos de una factura en borrador');
+  }
+  if (!factura.cobroId) throw ApiError.badRequest('Esta factura no viene de un cobro');
+
+  const { conceptos } = await buildConceptos(factura.cobroId);
+  const totales = calcularTotalesConceptos(conceptos);
+
+  return prisma.$transaction(async (tx) => {
+    await tx.facturaConcepto.deleteMany({ where: { facturaId: factura.id } });
+    return tx.factura.update({
+      where: { id: factura.id },
+      data: {
+        ...totales,
+        conceptos: { create: conceptos.map(datosConcepto) },
+      },
+      include: { conceptos: { orderBy: { id: 'asc' } }, cliente: true },
+    });
+  });
 }
 
 function getCreds(empresa: any): PacCredentials {

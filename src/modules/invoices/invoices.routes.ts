@@ -4,7 +4,7 @@ import { asyncHandler } from '../../utils/asyncHandler';
 import { prisma } from '../../lib/prisma';
 import { buildPaginated, getOrderBy, getPagination, ok } from '../../utils/http';
 import { ApiError } from '../../utils/ApiError';
-import { cancelarFactura, crearFacturaDesdeCobro, timbrarFactura } from './invoices.service';
+import { agruparConceptosFactura, cancelarFactura, crearFacturaDesdeCobro, timbrarFactura } from './invoices.service';
 
 const router = Router();
 
@@ -51,6 +51,35 @@ router.post(
     const cobroId = Number(req.params.cobroId);
     const f = await crearFacturaDesdeCobro(cobroId, req.empresaId, req.user!.id);
     res.status(201).json({ success: true, data: f, message: 'Factura creada en borrador' });
+  }),
+);
+
+// Unir conceptos repetidos en una factura en borrador (conserva el folio)
+router.post(
+  '/:id/agrupar-conceptos',
+  authMiddleware,
+  requirePermission('facturas', 'editar'),
+  asyncHandler(async (req, res) => {
+    const id = Number(req.params.id);
+    const f = await agruparConceptosFactura(id, req.empresaId);
+    await prisma.auditLog
+      .create({
+        data: {
+          empresaId: req.empresaId ?? null,
+          usuarioId: req.user!.id,
+          accion: 'ACTUALIZAR',
+          modulo: 'facturas',
+          entidadTipo: 'factura',
+          entidadId: id,
+          descripcion: `Conceptos de la factura ${f.serie}-${f.folio} actualizados (conceptos repetidos unidos)`,
+        },
+      })
+      .catch(() => undefined);
+    res.json({
+      success: true,
+      data: f,
+      message: 'Conceptos actualizados: los repetidos se unieron en una sola línea',
+    });
   }),
 );
 
