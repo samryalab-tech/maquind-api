@@ -8,7 +8,7 @@ export const clienteSchema = z.object({
   rfc: z.string().min(12).max(13),
   regimenFiscal: z.string().length(3),
   codigoPostalFiscal: z.string().length(5),
-  usoCfdi: z.string().length(4).default('G03'),
+  usoCfdi: z.string().length(3, 'El uso de CFDI debe tener 3 caracteres (ej. G03)').default('G03'),
   formaPago: z.string().max(3).optional().nullable(),
   metodoPago: z.string().max(3).optional().nullable(),
   email: z.string().email().optional().nullable(),
