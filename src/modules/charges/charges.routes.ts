@@ -135,4 +135,55 @@ router.post(
   }),
 );
 
+// Cancelar un cobro: libera sus trabajos para que se puedan cobrar de nuevo.
+router.post(
+  '/:id/cancelar',
+  authMiddleware,
+  requirePermission('cobros', 'editar'),
+  asyncHandler(async (req, res) => {
+    const id = Number(req.params.id);
+    const empresaId = req.empresaId!;
+    const c = await prisma.cobro.findFirst({
+      where: { id, empresaId },
+      include: { pagos: true, facturas: true, trabajos: { include: { trabajo: { select: { folio: true } } } } },
+    });
+    if (!c) throw ApiError.notFound();
+    if (c.estado === 'CANCELADO') throw ApiError.conflict('Este cobro ya está cancelado');
+    if (c.pagos.length) {
+      throw ApiError.conflict(
+        'Este cobro tiene pagos registrados. Elimina primero los pagos para poder cancelarlo.',
+      );
+    }
+    const timbrada = c.facturas.find((f) => f.estado === 'TIMBRADA');
+    if (timbrada) {
+      throw ApiError.conflict(
+        `Este cobro tiene la factura timbrada ${timbrada.serie}-${timbrada.folio}. Cancela el CFDI antes de cancelar el cobro.`,
+      );
+    }
+
+    const actualizado = await prisma.$transaction(async (tx: PrismaTx) => {
+      // Las facturas en borrador nunca se enviaron al SAT: se marcan canceladas.
+      await tx.factura.updateMany({ where: { cobroId: id, estado: 'BORRADOR' }, data: { estado: 'CANCELADA' } });
+      return tx.cobro.update({ where: { id }, data: { estado: 'CANCELADO' } });
+    });
+
+    await prisma.auditLog
+      .create({
+        data: {
+          empresaId,
+          usuarioId: req.user!.id,
+          accion: 'CANCELAR',
+          modulo: 'cobros',
+          entidadTipo: 'cobro',
+          entidadId: id,
+          descripcion: `Cobro ${c.folio} cancelado; sus trabajos vuelven a estar disponibles`,
+          datos: { folio: c.folio, trabajos: c.trabajos.map((t) => t.trabajo.folio) },
+        },
+      })
+      .catch(() => undefined);
+
+    return ok(res, actualizado, 'Cobro cancelado. Sus trabajos ya se pueden volver a cobrar.');
+  }),
+);
+
 export default router;
