@@ -2,7 +2,7 @@ import { prisma } from '../../lib/prisma';
 import { logger } from '../../lib/logger';
 import { ApiError } from '../../utils/ApiError';
 import { decrypt } from '../../utils/crypto';
-import { calcularTotales, round2, toNum } from '../../utils/money';
+import { round2, toNum } from '../../utils/money';
 import { getPacAdapter } from './pac/pac.factory';
 import type { CfdiConcepto, PacCredentials } from './pac/pac.types';
 import { generateFacturaPdf } from '../pdf/pdf.builders';
@@ -15,29 +15,53 @@ import { env } from '../../config/env';
 async function buildConceptos(cobroId: number): Promise<{ conceptos: CfdiConcepto[]; trabajoIds: number[] }> {
   const cobro = await prisma.cobro.findUnique({
     where: { id: cobroId },
-    include: { trabajos: { include: { trabajo: { include: { items: { include: { producto: true } } } } } } },
+    include: { trabajos: { include: { trabajo: { include: { items: { include: { producto: true }, orderBy: { orden: 'asc' } } } } } } },
   });
   if (!cobro) throw ApiError.notFound('Cobro no encontrado');
 
-  const conceptos: CfdiConcepto[] = [];
+  // Los conceptos idénticos se agrupan: si hay 3 "rectificado de pieza" al
+  // mismo precio, la factura debe llevar una sola línea con cantidad 3.
+  const agrupados = new Map<string, CfdiConcepto>();
   const trabajoIds: number[] = [];
+
   for (const ct of cobro.trabajos) {
     trabajoIds.push(ct.trabajoId);
-    for (const it of ct.trabajo.items) {
-      conceptos.push({
-        claveProdServ: it.producto?.claveProdServ ?? '01010101',
-        claveUnidad: it.producto?.claveUnidad ?? 'E48',
-        cantidad: toNum(it.cantidad),
-        unidad: it.unidad,
-        descripcion: it.descripcion,
-        valorUnitario: toNum(it.precioUnitario),
-        importe: toNum(it.importe),
-        ivaTasa: toNum(it.ivaTasa),
-        importeIva: toNum(it.importeIva),
-      });
+    const items = ct.trabajo.items;
+    if (!items.length) {
+      throw ApiError.badRequest(
+        `El trabajo ${ct.trabajo.folio} no tiene conceptos capturados. Corrige el trabajo antes de facturar.`,
+      );
+    }
+    for (const it of items) {
+      const claveProdServ = it.producto?.claveProdServ ?? '01010101';
+      const claveUnidad = it.producto?.claveUnidad ?? 'E48';
+      const descripcion = it.descripcion.trim().replace(/\s+/g, ' ');
+      const valorUnitario = toNum(it.precioUnitario);
+      const ivaTasa = toNum(it.ivaTasa);
+      const clave = [claveProdServ, claveUnidad, it.unidad.toLowerCase(), descripcion.toLowerCase(), valorUnitario.toFixed(2), ivaTasa.toFixed(2)].join('|');
+
+      const previo = agrupados.get(clave);
+      if (previo) {
+        previo.cantidad = round2(previo.cantidad + toNum(it.cantidad));
+        previo.importe = round2(previo.importe + toNum(it.importe));
+        previo.importeIva = round2(previo.importeIva + toNum(it.importeIva));
+      } else {
+        agrupados.set(clave, {
+          claveProdServ,
+          claveUnidad,
+          cantidad: toNum(it.cantidad),
+          unidad: it.unidad,
+          descripcion,
+          valorUnitario,
+          importe: toNum(it.importe),
+          ivaTasa,
+          importeIva: toNum(it.importeIva),
+        });
+      }
     }
   }
-  return { conceptos, trabajoIds };
+
+  return { conceptos: [...agrupados.values()], trabajoIds };
 }
 
 /** Crea una factura en BORRADOR a partir de un cobro. */
@@ -49,12 +73,28 @@ export async function crearFacturaDesdeCobro(cobroId: number, empresaId?: number
   if (!cobro) throw ApiError.notFound('Cobro no encontrado');
   if (!cobro.trabajos.length) throw ApiError.badRequest('El cobro no tiene trabajos asociados');
 
+  const facturaExistente = await prisma.factura.findFirst({
+    where: { cobroId: cobro.id, estado: { not: 'CANCELADA' } },
+    select: { id: true, serie: true, folio: true },
+  });
+  if (facturaExistente) {
+    throw ApiError.conflict(
+      `Este cobro ya tiene la factura ${facturaExistente.serie}-${facturaExistente.folio}. Cancélala antes de generar otra.`,
+    );
+  }
+
   const { conceptos } = await buildConceptos(cobroId);
-  const totales = calcularTotales(conceptos.map((c) => ({
-    cantidad: c.cantidad,
-    precioUnitario: c.valorUnitario,
-    ivaTasa: c.ivaTasa,
-  })));
+  // Los totales se toman de los conceptos (ya agrupados) para que la factura
+  // cuadre exactamente con lo que se muestra en el desglose.
+  const importeNeto = round2(conceptos.reduce((acc, c) => acc + c.importe, 0));
+  const bruto = round2(conceptos.reduce((acc, c) => acc + c.cantidad * c.valorUnitario, 0));
+  const totales = {
+    subtotal: bruto,
+    descuento: Math.max(0, round2(bruto - importeNeto)),
+    iva: round2(conceptos.reduce((acc, c) => acc + c.importeIva, 0)),
+    ieps: 0,
+    total: round2(importeNeto + conceptos.reduce((acc, c) => acc + c.importeIva, 0)),
+  };
 
   const empresa = cobro.empresa;
   const serie = empresa.serieFactura;
